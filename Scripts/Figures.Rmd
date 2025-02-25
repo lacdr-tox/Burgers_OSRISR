@@ -8,8 +8,8 @@ output: html_document
 This script can be used to simulate the different model versions described in the publication. It can also be used to replicate the figures.
 
 The code to replicate Supplementary Figure S1, can be found in DataAnalysis_CompoundData.Rmd
-The code to replicate Figure 3c and Supplementary Figure S13, can be found in DataAnalysis_TranscriptomicsData.Rmd
-The code to replicate Figure 1c can be found ...
+The code to replicate Figure 3c and Supplementary Figure S13, can be found in Transcriptomics/Fig3c_S13_TranscriptomicsData.Rmd
+The code to replicate Figure 1c can be found Transcriptomics/HepG2_HLCs_PHH_joined_data plot_TD22_TD35_TD37.Rmd
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
