@@ -1,0 +1,89 @@
+---
+title: "Data analysis - GSH & ATP data"
+author: "Elsje Burgers"
+last modified: "2024-05-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r}
+rm(list = ls())
+library(tidyverse)
+
+save_data = 0 #if 1 data will be saved as csv, if 0 data will not be saved
+```
+
+# Load data
+```{r}
+#select compound
+compound = "NIT" #options: DIC, KET & NIT 
+GSH_data = read.csv(paste("../Data/GSH_LDH_Res/raw_data/combined_GSH_", compound, ".csv", sep = ""), header = TRUE)
+
+```
+
+# Plot raw data
+```{r}
+ggplot(GSH_data) + 
+  geom_point(aes(x = time, y = mean, color = as.factor(replID))) +
+  facet_wrap(vars(dose)) +
+  expand_limits(y=0)
+```
+
+# Normalise data
+```{r}
+GSH_data_normalised = GSH_data %>%
+  group_by(replID, time) %>% 
+  mutate(value_0 = mean[dose==0]) %>%
+  mutate(mean_norm = mean/value_0)
+
+```
+
+# Plot data
+```{r}
+ggplot(GSH_data_normalised) + 
+  geom_point(aes(x = time, y = mean_norm, color = as.factor(replID))) +
+  facet_wrap(vars(dose)) +
+  expand_limits(y=0)
+
+GSH_mean = GSH_data_normalised %>%
+  group_by(time, dose) %>%
+  summarise(MEAN = mean(mean_norm),
+            SD = sd(mean_norm))
+
+ggplot() + 
+  # geom_errorbar(data = GSH_mean, aes(x = time, ymin = MEAN-SD, ymax = MEAN+SD)) +
+    geom_point(data = GSH_data_normalised, aes(x = time, y = mean_norm)) +
+  geom_line(data = GSH_mean, aes(x = time, y = MEAN)) +
+  facet_wrap(vars(dose))
+
+```
+# make fit data
+```{r}
+data4fitting_GSH = GSH_data_normalised %>%
+  filter(dose>0) %>%
+  mutate(StateVar = "GSH",
+         timeAfterExposure = time,
+         dose_uM = dose,
+         dose_uMadj = dose,
+         treatment = compound,
+         data4modelReal = mean_norm) %>%
+  group_by(dose_uM, replID) %>%
+  mutate(timeID = order(time)) %>%
+  ungroup() %>%
+  select("StateVar", "replID", "treatment", "timeID", "timeAfterExposure", 
+         "dose_uM", "dose_uMadj", "data4modelReal") %>%
+  arrange(replID, dose_uM, timeID)
+
+if (save_data == 1){
+    write.csv(data4fitting_GSH, file = paste("../Data/GSH_LDH_Res/GSHdata_", 
+                                             compound, "_", Sys.Date(), ".csv", 
+                                             sep = ""))
+}
+
+```
+

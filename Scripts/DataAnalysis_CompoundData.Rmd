@@ -1,0 +1,159 @@
+---
+title: "Data analysis - Compound data"
+author: "Elsje Burgers"
+last modified: "2024-04-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r}
+rm(list = ls())
+library(tidyverse)
+
+save_data = 0 #if 1 data will be saved as csv, if 0 data will not be saved
+```
+
+# Load data
+```{r}
+compound_data = read.csv("../Data/CompoundData/20240215_CompoundData_diclo_Isa_keto_Nitro.csv", header = TRUE) %>%
+  filter(Molecule != "Isavuconazole") #this compound was not used in the manuscript
+```
+
+# Plot raw data
+```{r}
+############
+mean_compound_data  = compound_data %>%
+  group_by(Molecule, Cells, Incubation_Time, Dose_Level) %>%
+  summarise(mean_amount = mean(Amount.ng.ml, na.rm = TRUE), 
+            sd_amount = sd(Amount.ng.ml, na.rm = TRUE))
+
+ggplot() + theme_classic(base_size = 13) +
+  geom_point(data = filter(compound_data, Dose_Level != "C"),
+             aes(x = Incubation_Time, y = Amount.ng.ml, color = Cells), alpha = 0.5) +
+   geom_line(data = filter(mean_compound_data, Dose_Level != "C"),
+              aes(x = Incubation_Time, y = mean_amount, color = Cells)) +
+  facet_grid(cols = vars(Dose_Level), rows = vars(Molecule), scales = "free") + 
+  #labs(title = "Uncorrected Compound measurements") +
+  scale_color_viridis_d(end = 0.8) + expand_limits(y=1) +
+  scale_y_continuous(trans='log10')
+  
+
+```
+#Correct data
+```{r}
+compound_data_nocells_mean = compound_data %>%
+  filter(Cells == "no cells" & Dose_uM>0) %>%
+  group_by(Molecule, Dose_uM) %>%
+  summarize(mean_per_dose = mean(Amount.ng.ml, na.rm = TRUE))%>%
+  ungroup()
+
+compound_data_nocells_fc = compound_data %>%
+  filter(Cells == "no cells" & Dose_uM>0) %>%
+  left_join(compound_data_nocells_mean) %>%
+  mutate(fc = Amount.ng.ml/mean_per_dose) %>%
+  group_by(Molecule, Dose_uM, Incubation_Time) %>%
+  mutate(mean_fc = mean(fc, na.rm = TRUE)) %>%
+  group_by(Molecule, Incubation_Time) %>%
+  mutate(mean_mean_fc = mean(mean_fc, na.rm = TRUE)) %>%
+  ungroup() %>%
+  select(Molecule, Dose_uM, Dose_Level, Incubation_Time, fc, mean_fc, mean_mean_fc)
+
+
+compounds = unique(compound_data$Molecule)
+for (compound in compounds) {
+  plot = ggplot(data = filter(compound_data_nocells_fc, Molecule == compound)) +
+    theme_classic(base_size = 13) +
+    geom_point(aes(x = Incubation_Time, y = fc, colour = as.factor(Dose_uM))) +
+    geom_point(aes(x = Incubation_Time, y = mean_mean_fc), size = 3) +
+    labs(colour = "Dose (uM)", title = compound) + 
+    scale_color_viridis_d(end = 0.8)
+  print(plot)
+}
+
+# compound_data_nocells_fc = compound_data %>%
+#   filter(Cells == "no cells" & Dose_uM>0) %>%
+#   left_join(compound_data_nocells_mean) %>%
+#   mutate(fc = Amount.ng.ml/mean_per_dose) %>%
+#   group_by(Molecule, Dose_uM, Incubation_Time) %>%
+#   mutate(mean_fc = mean(fc, na.rm = TRUE)) %>%
+#   group_by(Molecule, Incubation_Time) %>%
+#   summarize(mean_mean_fc = mean(mean_fc, na.rm = TRUE)) %>%
+#   ungroup()
+
+  plot_S1 = ggplot(data = filter(compound_data_nocells_fc)) +
+    theme_classic(base_size = 13) +
+    geom_point(aes(x = Incubation_Time, y = fc, colour = as.factor(Dose_Level)), alpha = 0.5) +
+    geom_point(aes(x = Incubation_Time, y = mean_mean_fc), size = 3) +
+    labs(colour = "Dose Level") + 
+    facet_grid(cols = vars(Molecule)) + expand_limits(y=0) +
+    scale_color_viridis_d() + xlab("Time (hours)") + ylab("Mean Fold Change (-)")
+  print(plot_S1)
+  
+  if(0){
+    ggsave("FigureS1.pdf", plot = plot_S1, path = "..//Figures", width = 20,
+         height = 8, units = "cm", dpi = 300)
+  }
+  
+```
+
+```{r}
+compound_data_corrected = compound_data %>%
+  left_join(compound_data_nocells_fc) %>%
+  mutate(Amount = Amount.ng.ml/mean_mean_fc) %>%
+  group_by(Molecule, Cells, Dose_uM, Incubation_Time) %>%
+  mutate(mean_amount = mean(Amount)) %>%
+  ungroup()
+
+# for (compound in compounds) {
+#   plot = ggplot(data = filter(compound_data_corrected, Molecule == compound & 
+#                        Dose_uM>0 & Cells == "cells")) + 
+#     theme_classic(base_size = 13) +
+#     geom_point(aes(x = Incubation_Time, y = Amount)) + 
+#     geom_point(aes(x = Incubation_Time, y = mean_amount), shape = "x", 
+#                colour = "red", size = 5) +
+#     facet_wrap(vars(Dose_uM), scales = "free") + labs(title = compound)
+#   print(plot)
+# }
+
+for (compound in compounds) {
+  data4fitting = compound_data_corrected %>%
+    filter(Molecule == compound & Cells == "cells" & Dose_uM>0) %>%
+    mutate(StateVar = "Compound",
+           timeID = ifelse(Incubation_Time==48, 5, 
+                           ifelse(Incubation_Time == 24, 4,
+                                  ((Incubation_Time/3)+1)))) %>%
+    group_by(Incubation_Time, Dose_uM) %>%
+    mutate(replID = order(Replicate)) %>%
+    ungroup() %>%
+    rename(treatment = Molecule,
+           timeAfterExposure = Incubation_Time,
+           dose_uM = Dose_uM,
+           data4modelReal = Amount) %>%
+    select("StateVar", "replID", "treatment", "timeID", "timeAfterExposure", 
+         "dose_uM", "data4modelReal") %>%
+    arrange(replID, dose_uM, timeID)
+    
+
+  if (save_data == 1){
+    write.csv(data4fitting, file = paste("../Data/CompoundData/CompoundData_", compound, 
+                                          "_", Sys.Date(), ".csv", sep = ""))
+  }
+}
+
+ggplot() + theme_classic(base_size = 13) +
+  geom_point(data = filter(compound_data_corrected, Dose_Level != "C"),
+             aes(x = Incubation_Time, y = Amount.ng.ml, colour = Cells), alpha = 0.5) +
+   geom_line(data = filter(compound_data_corrected, Dose_Level != "C"),
+              aes(x = Incubation_Time, y = mean_amount, colour = Cells)) +
+  facet_grid(cols = vars(Dose_Level), rows = vars(Molecule), scales = "free") + 
+  # labs(title = "Corrected intracellular compound meaurements") +
+  scale_color_viridis_d(end = 0.8) + expand_limits(y=1) +
+  scale_y_continuous(trans='log10')
+
+```
+

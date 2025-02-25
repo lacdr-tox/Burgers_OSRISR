@@ -1,0 +1,322 @@
+---
+title: "Data analysis - Imaging data - part 2"
+author: "Elsje Burgers"
+last modified: "2025-01-14"
+output: html_document
+---
+
+This script can be used to obtain the data used for figures and parameter fitting. It uses the output of the script "DataAnalysis_ImagingData_part1".
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r}
+rm(list = ls())
+library(tidyverse)
+
+save_data = 0 #if 1 data will be saved as csv, if 0 data will not be saved
+```
+
+# Load data
+Here, we load the files and correct some minor mistakes in the files to make sure they all use the same way to indicate the cell line etc.
+```{r}
+data_GFP = do.call(rbind, lapply(list.files(path = "../Data/ImagingData_HepG2/all_data/summarydata_GFP/", 
+                                            full.names = TRUE), read.delim))
+# data_ANVPI = do.call(rbind, lapply(list.files(path = "../Data/ImagingData_HepG2/all_data/summarydata_AnVPI/", 
+#                                               full.names = TRUE), read.delim))
+
+data_GFP$cell_line[data_GFP$cell_line == "HepG2MDM2-GFP"] = "HepG2 MDM2-GFP"
+data_GFP$cell_line[data_GFP$cell_line == "HepG2p21-GFP"] = "HepG2 p21-GFP"
+data_GFP$cell_line[data_GFP$cell_line == "HepG2 NRF-2-GFP"] = "HepG2 NRF2-GFP"
+data_GFP$replID[data_GFP$plateID == "20180329_SBT-TQ_ATF4_rep2"] = 2
+
+# data_ANVPI$cell_line[data_ANVPI$cell_line == "HepG2MDM2-GFP"] = "HepG2 MDM2-GFP"
+# data_ANVPI$cell_line[data_ANVPI$cell_line == "HepG2p21-GFP"] = "HepG2 p21-GFP"
+# data_ANVPI$cell_line[data_ANVPI$cell_line == "HepG2 NRF-2-GFP"] = "HepG2 NRF2-GFP"
+# data_ANVPI$replID[data_ANVPI$plateID == "20180329_SBT-TQ_ATF4_rep2"] = 2
+
+data_GFP = mutate(data_GFP, treatment = gsub(' ', '', treatment))
+# data_ANVPI = mutate(data_ANVPI, treatment = gsub(' ', '', treatment))
+```
+
+# GFP data
+## Mean technical replicates
+```{r}
+data_GFP_mt = data_GFP %>%
+  group_by(treatment, dose_uM, cell_line, plateID, replID, timeID, timeAfterExposure) %>%
+  summarise(cell_count = mean(cell_count, na.rm = TRUE),
+            GFP_int = mean(GFP_int, na.rm = TRUE))
+```
+
+## Correct and normalise
+The data is corrected for the background GFP expression by subtracting the intensity for the exposure to 0.01 DMSO from the measured intensity.
+There is various ways of normalising the data. In the following chunk it is normalised using the minimal value per plate and the mean value per plate.
+```{r}
+# Data set containing the 0.01 DMSO values is defined here.
+correction = filter(data_GFP_mt, treatment=="DMSO" & dose_uM == 0.01) %>%
+  ungroup() %>%
+  select(cell_line, plateID, replID, timeID, timeAfterExposure, GFP_int) %>%
+  rename(DMSO_value = GFP_int)
+
+# Now the correction is done.
+GFP_cor = data_GFP_mt %>%
+  left_join(correction) %>%
+  mutate(GFP_corrected = ifelse(!is.na(GFP_int),
+                          GFP_int - DMSO_value, 
+                          GFP_int))
+
+# Here the mean and min value to normalise with are extracted.
+plate_mean_min <- GFP_cor %>%
+  group_by(cell_line, replID) %>%
+  summarise(mean_value = mean(GFP_corrected, na.rm = TRUE),
+            min_value = min(GFP_corrected, na.rm = TRUE))
+
+# Min-mean normalization
+GFP_normalised <- GFP_cor %>%
+  left_join(plate_mean_min) %>%
+  mutate(GFP_norm = ifelse(!is.na(GFP_corrected),
+                           (GFP_corrected - min_value)/(mean_value - min_value),
+                           GFP_corrected))
+
+# Get desired dataset
+GFP_realdata = GFP_normalised %>%
+  mutate(StateVar = gsub('HepG2 ', '', cell_line )) %>%
+  mutate(StateVar = gsub('-GFP', '', StateVar )) %>%
+  ungroup() %>%
+  select(treatment,dose_uM, replID, timeID, timeAfterExposure, GFP_norm, StateVar) %>%
+  rename(data4modelReal = GFP_norm, timeID_orig = timeID) %>%
+  mutate(timepoints = round(timeAfterExposure))
+
+# Dataset for steady-states:
+GFP_ss = GFP_realdata %>%
+  filter(treatment == "DMSO" & dose_uM == 0.01 & timeID_orig == 1) %>%
+  group_by(StateVar) %>%
+  summarise(steady_state = mean(data4modelReal))
+
+if (0) {#(save_data == 1){
+  write.csv(GFP_ss, file = paste("../Data/ImagingData_HepG2/SteadyStates_DMSO_", 
+                                  Sys.Date(), ".csv", sep = ""))
+}
+  
+```
+## Interpolate
+We interpolate the data using a cubic normal spline.
+```{r}
+tmps = GFP_realdata %>%
+  group_by(StateVar, replID) %>%
+  summarise(last_tmps = max(timeAfterExposure), first_tmps = min(timeAfterExposure))
+max_tmp = min(tmps$last_tmps)
+
+# Now we interpolate the data
+interpolation  = GFP_realdata %>%
+  group_by(treatment, dose_uM, replID,  StateVar) %>%
+  summarise(timepoints = spline(x = timeAfterExposure, y = data4modelReal, 
+                                xout = 0:max_tmp, method = "natural")$x, 
+            data4modelInterpol = spline(x = timeAfterExposure, y = data4modelReal, 
+            xout = 0:max_tmp, method = "natural")$y) %>%
+  left_join(GFP_realdata) %>%
+  group_by(treatment, dose_uM, replID,  StateVar) %>%
+  mutate(data4modelInterpol = ifelse(timepoints < min(timeAfterExposure, na.rm = TRUE)
+                                     & is.na(timeAfterExposure),NA, data4modelInterpol))
+```
+## Filter
+We select the compound and doses of interest.
+```{r}
+compound =  "CDDP" #"DIC" #"NIT"  #"KET"  #
+max_dose  = 1000  #404   #120    #66     # 
+
+selected_data = interpolation %>%
+    filter(treatment == compound & dose_uM <= max_dose)
+
+print(unique(selected_data$dose_uM))
+
+# selected_data = interpolation %>%
+#     filter(treatment == compound & dose_uM == max_dose)
+```
+
+## Plot
+We plot the data to check if interpolation was done correctly. 
+```{r}
+# plot all timepoints
+plot = ggplot(data = selected_data) + 
+  geom_point(aes(x = timepoints, y = data4modelInterpol, color  = as.factor(replID)), shape = 1) + 
+  geom_point(aes(x = timeAfterExposure, y = data4modelReal, color  = as.factor(replID)), shape = 2) +
+  facet_grid(cols = vars(dose_uM), rows = vars(StateVar), scales = "free")
+print(plot)
+
+# plot early timepoints, most errors in extrapolation occur there.
+plot = ggplot(data = filter(selected_data, timepoints<10)) + 
+  geom_point(aes(x = timepoints, y = data4modelInterpol, color  = as.factor(replID)), shape = 1) + 
+  geom_point(aes(x = timeAfterExposure, y = data4modelReal, color  = as.factor(replID)), shape = 3) +
+  facet_grid(cols = vars(dose_uM), rows = vars(StateVar), scales = "free")
+print(plot)
+
+# for one protein
+plot = ggplot(data = filter(selected_data, timepoints<20 & StateVar == "NRF2" )) + 
+  geom_point(aes(x = timepoints, y = data4modelInterpol, 
+                 shape  = as.factor(replID)), color = "black") +
+  geom_point(aes(x = timeAfterExposure, y = data4modelReal, 
+                 shape  = as.factor(replID)), color = "red") +
+  labs(shape = "replID") + 
+  facet_wrap(vars(dose_uM))
+print(plot)
+```
+## Save
+If desired, we can save the data here in the format required for the parameter fitting.
+```{r}
+alldata = selected_data %>%
+  mutate(timeID = timepoints+1, dose_uMadj = dose_uM) %>%
+  select("StateVar", "replID", "treatment", "timeID", "timeAfterExposure", 
+         "dose_uM", "dose_uMadj", "timepoints", "data4modelInterpol", 
+         "data4modelReal", "timeID_orig")
+
+
+fitdata = alldata %>%
+  filter(StateVar %in% c("ATF4", "CHOP", "NRF2", "SRXN1"))
+
+if (save_data == 1){
+  write.csv(alldata, file = paste("../Data/ImagingData_HepG2/GFPdata_all_", compound, "_", 
+                                  Sys.Date(), ".csv", sep = ""))
+  write.csv(fitdata, file = paste("../Data/ImagingData_HepG2/GFPdata_4fit_", compound, "_", 
+                                  Sys.Date(), ".csv", sep = ""))
+}
+```
+
+<!-- # Viability data - treatment selection & normalisation -->
+<!-- To make it easier to work with, we want to filter the data for the selected treatment and compute the mean of technical replicates, furthermore, we will normalise the cell count. -->
+<!-- ## Filter and compute mean of technical replicates -->
+<!-- ```{r} -->
+<!-- data_ANVPI_filter = data_ANVPI %>% -->
+<!--   filter(treatment == compound & timeID<43) %>% -->
+<!--   group_by(treatment, dose_uM, cell_line, plateID, replID, timeID, timeAfterExposure) %>% -->
+<!--   summarise(cell_count = mean(cell_count, na.rm = TRUE), -->
+<!--             AnVPos_0.1 = mean(AnVPos_0.1, na.rm = TRUE), -->
+<!--             PIPos_0.1 = mean(PIPos_0.1, na.rm = TRUE)) -->
+<!-- ``` -->
+<!-- ## Normalise -->
+<!-- ```{r} -->
+<!-- count0 = data_ANVPI_filter %>% -->
+<!--   filter(timeID == 1) %>% -->
+<!--   rename(count_t0 = cell_count) %>% -->
+<!--   ungroup() %>% -->
+<!--   select(treatment, dose_uM, replID, cell_line, count_t0) -->
+
+<!-- data_ANVPI_norm = data_ANVPI_filter %>% -->
+<!--   left_join(count0) %>% -->
+<!--   mutate(count_norm = cell_count/count_t0) -->
+<!-- ``` -->
+
+<!-- # Viability data - compute mean -->
+<!-- To compute the mean, the data does not need to be interpolated. We do want to compute the average of all measurements. -->
+<!-- ## Average -->
+<!-- ```{r} -->
+<!-- data_ANVPI_mean = data_ANVPI_norm %>% -->
+<!--   group_by(treatment, dose_uM, timeID) %>% -->
+<!--   summarise(mean_time = mean(timeAfterExposure, na.rm = TRUE), -->
+<!--             mean_count = mean(cell_count, na.rm = TRUE), -->
+<!--             sd_count = sd(cell_count, na.rm = TRUE), -->
+<!--             mean_count_norm = mean(count_norm, na.rm = TRUE), -->
+<!--             sd_count_norm = sd(count_norm, na.rm = TRUE), -->
+<!--             mean_PI = mean(PIPos_0.1, na.rm = TRUE), -->
+<!--             sd_PI = sd(PIPos_0.1, na.rm = TRUE), -->
+<!--             mean_AnV = mean(AnVPos_0.1, na.rm = TRUE), -->
+<!--             sd_AnV = sd(AnVPos_0.1, na.rm = TRUE)) -->
+<!-- ``` -->
+
+<!-- ## Save -->
+<!-- If desired, we can save the data here.  -->
+<!-- ```{r} -->
+<!-- if (save_data == 1){ -->
+<!--   write.csv(data_ANVPI_mean, file = paste("../Data/ImagingData_HepG2/ViabilityData_", compound,  -->
+<!--                                           "_", Sys.Date(), ".csv", sep = "")) -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Viability data - adversity model -->
+<!-- For fitting the adversity model, we need the relative number of AnV positive cells and of non-AnV positive cells. Moreover, we need to interpolate the data to use it for fitting. -->
+
+<!-- ## Compute relative number of apoptotic and live cells -->
+<!-- ```{r} -->
+<!-- data_RelativeCount = data_ANVPI_norm %>% -->
+<!--   mutate(live_cells = (1-AnVPos_0.1)*count_norm, -->
+<!--          apoptotic_cells = (AnVPos_0.1)*count_norm, -->
+<!--          total_cells = count_norm, -->
+<!--          plate = paste(cell_line, replID), -->
+<!--          timepoints = round(timeAfterExposure)) %>% -->
+<!--   pivot_longer(c(live_cells, apoptotic_cells, total_cells), names_to = "StateVar",  -->
+<!--                values_to = "data4modelReal") %>% -->
+<!--   ungroup() %>% -->
+<!--   select(treatment, dose_uM, plate, StateVar, data4modelReal, timeAfterExposure,  -->
+<!--          timeID, timepoints) -->
+<!-- ``` -->
+
+<!-- ##Interpolation -->
+<!-- ```{r} -->
+<!-- interpolation_AnV  = data_RelativeCount %>% -->
+<!--   group_by(treatment, dose_uM, plate, StateVar) %>% -->
+<!--   summarise(timepoints = spline(x = timeAfterExposure, y = data4modelReal,  -->
+<!--                                 xout = 0:max_tmp, method = "natural")$x,  -->
+<!--             data4modelInterpol = spline(x = timeAfterExposure, y = data4modelReal,  -->
+<!--             xout = 0:max_tmp, method = "natural")$y) %>% -->
+<!--   left_join(data_RelativeCount) %>% -->
+<!--   group_by(treatment, dose_uM, plate,  StateVar) %>% -->
+<!--   mutate(data4modelInterpol = ifelse(data4modelInterpol<0, 0, data4modelInterpol), -->
+<!--          data4modelInterpol = ifelse(timepoints < min(timeAfterExposure, na.rm = TRUE) -->
+<!--                                      & is.na(timeAfterExposure),NA, data4modelInterpol)) -->
+
+<!-- # data_RelativeCount = data_RelativeCount %>% -->
+<!-- #   mutate(replID3 = match(replID2, unique(data_RelativeCount$replID2))) -->
+
+<!-- ``` -->
+<!-- ## Plot -->
+<!-- We plot the data to check if interpolation was done correctly.  -->
+<!-- ```{r} -->
+<!-- # plot all timepoints -->
+<!-- for (i in unique(interpolation_AnV$plate)) { -->
+<!-- plot = ggplot(data = filter(interpolation_AnV,plate == i)) +  -->
+<!--   geom_point(aes(x = timepoints, y = data4modelInterpol,  -->
+<!--                  color  = as.factor(dose_uM)), shape = 1) +  -->
+<!--   geom_point(aes(x = timeAfterExposure, y = data4modelReal,  -->
+<!--                  color  = as.factor(dose_uM)), shape = 2) + -->
+<!--   facet_wrap(vars(StateVar), scales = "free") -->
+<!-- print(plot) -->
+<!-- } -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # # plot early timepoints, most errors in extrapolation occur there. -->
+<!-- for (i in unique(interpolation_AnV$plate)) { -->
+<!-- plot = ggplot(data = filter(interpolation_AnV,plate == i & timepoints<10)) +  -->
+<!--   geom_point(aes(x = timepoints, y = data4modelInterpol,  -->
+<!--                  color  = as.factor(dose_uM)), shape = 1) +  -->
+<!--   geom_point(aes(x = timeAfterExposure, y = data4modelReal,  -->
+<!--                  color  = as.factor(dose_uM)), shape = 2) + -->
+<!--   facet_wrap(vars(StateVar), scales = "free") -->
+<!-- print(plot) -->
+<!-- } -->
+<!-- ``` -->
+<!-- ## Save -->
+<!-- If desired, we can save the data here in the format required for the parameter fitting. -->
+<!-- ```{r} -->
+<!-- fitdata_AnV = interpolation_AnV %>% -->
+<!--   filter(dose_uM <= max_dose) %>% -->
+<!--   rename(timeID_orig = timeID) %>% -->
+<!--   mutate(timeID = timepoints+1,  -->
+<!--          dose_uMadj = dose_uM, -->
+<!--          replID = match(plate, unique(interpolation_AnV$plate))) %>% -->
+<!--   ungroup() %>% -->
+<!--   select("StateVar", "replID", "treatment", "timeID", "timeAfterExposure",  -->
+<!--          "dose_uM", "dose_uMadj", "timepoints", "data4modelInterpol",  -->
+<!--          "data4modelReal", "timeID_orig") -->
+
+<!-- if (save_data == 1){ -->
+<!--   write.csv(fitdata_AnV, file = paste("../Data/ImagingData_HepG2/ANVdata_4fit_", compound, "_", -->
+<!--                                   Sys.Date(), ".csv", sep = "")) -->
+<!-- } -->
+<!-- ``` -->
+
+

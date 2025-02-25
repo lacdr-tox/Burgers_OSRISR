@@ -1,0 +1,244 @@
+---
+title: "Data analysis - Imaging data - part 1"
+author: "Elsje Burgers"
+last modified: "2024-03-25"
+output: html_document
+---
+
+This script can be used for the first part of the data analysis. It loads the raw data files. Those are filtered and the geometric mean of the GFP data, or the fraction AnV/PI postive cells is computed per image.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r}
+rm(list = ls())
+library(tidyverse)
+```
+
+# Load metadata
+These files were created by Wijaya et al. to remove faulty images:  
+* out of focus
+* compound precipitation
+* non-compound specific toxicity (like acidity caused by compound), as seen in lab or in images based on early cell death
+```{r}
+outputlistpath = "../Data/ImagingData_HepG2/all_data/outputLists"
+
+manual_qc_file_GFP <- read.delim( file = '../Data/ImagingData_HepG2/all_data/metadata/WellExclusionList_GFP.txt', sep = "\t")
+manual_qc_file_AnVPI <- read.delim( file = '../Data/ImagingData_HepG2/all_data/metadata/WellExclusionList_AnVPI.txt', sep = "\t")
+variable_file <- read.delim( file = '../Data/ImagingData_HepG2/all_data/metadata/variable_names_GFP.txt', sep = "\t")
+
+AnvPI_vars <- c("imageCountParentObj", "PI_masked_primaryID_AreaShape_Area",
+                "AnV_masked_primaryID_AreaShape_Area", "Nuclei_AreaShape_Area")
+
+# split up the locationIDs 
+manual_qc_file_GFP$locationID <- as.character(manual_qc_file_GFP$locationID)
+   tmp_GFP <- lapply(manual_qc_file_GFP$locationID, function(x) {
+     strsplit(x, ",") 
+   }
+   )
+names(tmp_GFP) <- manual_qc_file_GFP$plateID
+
+# unlist 1 layer
+rm_outliers_GFP <- lapply(tmp_GFP, "[[", 1)
+
+manual_qc_file_AnVPI$locationID <- as.character(manual_qc_file_AnVPI$locationID)
+tmp_AnVPI <- lapply(manual_qc_file_AnVPI$locationID, function(x) {
+     strsplit(x, ",") 
+   }
+   )
+names(tmp_AnVPI) <- manual_qc_file_AnVPI$plateID
+
+# unlist 1 layer
+rm_outliers_AnVPI <- lapply(tmp_AnVPI, "[[", 1)
+
+
+# check if rm_outliers has correct names
+names(rm_outliers_GFP) %in% dir(outputlistpath)
+sum(variable_file$plateID %in% dir(outputlistpath))
+
+names(rm_outliers_AnVPI) %in% dir(outputlistpath)
+sum(variable_file$plateID %in% dir(outputlistpath))
+
+manual_qc_file_GFP$plateID[manual_qc_file_GFP$plateID %in% variable_file$plateID]
+```
+# Load data & obtain summarydata
+Here, we load the data and apply the desired changes to obtain the summarydata.
+```{r}
+outputlist_file_paths_GFP <- dir(outputlistpath, 
+                        full.names = TRUE, recursive = TRUE, pattern = "GFP")
+outputlist_file_paths_AnVPI <- dir(outputlistpath, 
+                        full.names = TRUE, recursive = TRUE, pattern = "AnV")
+
+
+outputlist_file_paths_GFP <- outputlist_file_paths_GFP[!grepl("chunk[1-3]{1}" ,outputlist_file_paths_GFP) ]
+
+outputlist_file_paths_AnVPI <- outputlist_file_paths_AnVPI[!grepl("chunk[1-3]{1}" ,outputlist_file_paths_AnVPI) ]
+
+plateID_str <- unlist(lapply(outputlist_file_paths_GFP, function(paths) {
+  gsub("_DA_GFP.Rdata","", gsub("/","", str_extract(string = paths, pattern = "/[A-Za-z0-9-_]{20,40}.Rdata$")))
+}
+)
+)
+
+manual_fileplates <- sort(manual_qc_file_GFP$plateID)
+plateID_str <- sort(plateID_str)
+
+data.frame(qc_file = manual_fileplates, plateID_str = plateID_str,
+           match = manual_fileplates == plateID_str)
+```
+```{r}
+calc_summaries <- function( paths ) {
+  if(!grepl("AnVPI", paths)) {
+    isGFP = TRUE
+  } else {
+    isGFP = FALSE
+  }
+  
+  writeLines(paste(
+    "processing: ", paths, "\n GFP data is ", isGFP
+  ))
+  
+load(paths)
+
+if(isGFP) {
+  raw_data_GFP <- outputList$myDT
+
+  raw_data_GFP <- raw_data_GFP %>%
+    mutate(treatment = gsub("DMEM-noTNF", "DMEM no-TNF", treatment)) %>%
+    mutate(cell_line = gsub("HepG2 HMOX-GFP", "HepG2 HMOX1-GFP", cell_line)) %>%
+    mutate(cell_line = gsub("HepG2 srxn1-GFP", "HepG2 SRXN1-GFP", cell_line))
+
+  # select data, combine data
+  plateID_string <- str_extract(string = paths, pattern = "/[A-Za-z0-9-_]{20,35}.Rdata$")
+  plateID_string <- gsub("/","" ,plateID_string)
+  plateID_string <- gsub("_DA_GFP.Rdata", "", plateID_string)
+
+  sel_features_GFP <- variable_file %>% filter(plateID == plateID_string)
+  if(nrow(sel_features_GFP)== 0) {
+    stop("error in plateID from variable_file")
+    }
+  sel_columns <- unlist(strsplit( x = sel_features_GFP$variable, split = ","))
+
+  sel_data_GFP <- raw_data_GFP %>% 
+    select(locationID, treatment, dose_uM, cell_line, plateID, replID, timeID, 
+           timeAfterExposure, all_of(sel_columns)) %>% 
+    as_tibble()
+
+  # exclude wells based on manual metadata
+  eliminate_LocationID_GFP <- manual_qc_file_GFP %>% filter(plateID == plateID_string)
+  clean_locationID_GFP <- unlist(strsplit(x = eliminate_LocationID_GFP$locationID, 
+                                           split = ","))
+
+  sel_data_GFP <- sel_data_GFP %>% filter(!locationID %in% clean_locationID_GFP)
+
+  # calculate summaries
+  var_to_count <- sel_columns[grepl("GFP", sel_columns)]
+
+  # calc summaries
+  summary_data <- sel_data_GFP %>% 
+    group_by(locationID, treatment, dose_uM, cell_line, plateID, replID, timeID,
+             timeAfterExposure) %>%
+    summarise(cell_count = mean(imageCountParentObj, na.rm = TRUE),
+            GFP_int = exp(mean(log(get(var_to_count)[get(var_to_count)>0]), na.rm= TRUE))
+            )
+
+  ##create dose levels
+  dose_table <- summary_data %>%
+    arrange(plateID, treatment, dose_uM) %>% ungroup %>%
+    select(treatment, plateID, dose_uM) %>%
+    unique() %>%
+    group_by(plateID, treatment) %>%
+    mutate(dose_level = 1: n()) %>%
+    arrange(plateID, treatment, dose_uM, dose_level)
+
+  summary_data <- left_join(summary_data, dose_table, 
+                            by = c("plateID", "treatment", "dose_uM"))
+
+  return(summary_data)
+
+
+#} else if(!isGFP) {
+  # raw_data_AnVPI <- outputList$myDT
+  # 
+  # sel_data_AnVPI <- raw_data_AnVPI %>% 
+  #   select(locationID, treatment, dose_uM, cell_line, plateID, replID, timeID, 
+  #          timeAfterExposure, all_of(AnvPI_vars)) %>% 
+  #   as_tibble()
+  # 
+  # 
+  # plateID_string_AnVPI <- str_extract(string = paths, pattern = "/[A-Za-z0-9-_]{20,35}.Rdata$")
+  # plateID_string_AnVPI <- gsub("/","" ,plateID_string_AnVPI)
+  # plateID_string_AnVPI <- gsub("_DA_AnVPI.Rdata", "", plateID_string_AnVPI)
+  # 
+  # 
+  # eliminate_LocationID_AnVPI <- manual_qc_file_AnVPI %>% filter(plateID == plateID_string_AnVPI)
+  # clean_locationID_AnVPI <- unlist(strsplit( x = eliminate_LocationID_AnVPI$locationID, split = ","))
+  # 
+  # sel_data_AnVPI <- sel_data_AnVPI %>% filter(!locationID %in% clean_locationID_AnVPI)
+  # 
+  # sel_data_AnVPI_complete <- sel_data_AnVPI %>% 
+  #   mutate(FractionAnV = AnV_masked_primaryID_AreaShape_Area/Nuclei_AreaShape_Area, 
+  #          FractionPI = PI_masked_primaryID_AreaShape_Area/Nuclei_AreaShape_Area)
+  # 
+  # sel_data_AnVPI_complete[is.na(sel_data_AnVPI_complete)] <- 0
+  # 
+  # summary_data_AnVPI <- sel_data_AnVPI_complete %>% 
+  #   mutate(AnVPos_0 = FractionAnV > 0,
+  #          AnVPos_0.1 = FractionAnV > 0.1,
+  #          PIPos_0 = FractionPI > 0,
+  #          PIPos_0.1 = FractionPI > 0.1) %>%
+  #   group_by(locationID,treatment, dose_uM, cell_line, plateID, replID, timeID, 
+  #            timeAfterExposure) %>%
+  #   summarise(cell_count = mean(imageCountParentObj, na.rm = TRUE),
+  #             AnVPos_0 = mean(AnVPos_0),
+  #             AnVPos_0.1 = mean(AnVPos_0.1),
+  #             PIPos_0 = mean(PIPos_0),
+  #             PIPos_0.1 = mean(PIPos_0.1))
+  # 
+  # ##create dose levels
+  # dose_table <- summary_data_AnVPI %>%
+  #   arrange(plateID, treatment, dose_uM) %>% ungroup %>%
+  #   select(treatment, plateID, dose_uM) %>%
+  #   unique() %>%
+  #   group_by(plateID, treatment) %>%
+  #   mutate(dose_level = 1: n()) %>%
+  #   arrange(plateID, treatment, dose_uM, dose_level)
+  # 
+  # summary_data_AnVPI <- left_join(summary_data_AnVPI, dose_table, 
+  #                                 by = c("plateID", "treatment", "dose_uM"))
+  # 
+  # return(summary_data_AnVPI)
+} else {
+  stop("not evaluated")
+}
+  
+}
+
+# summary_lists_AnVPI <- lapply(outputlist_file_paths_AnVPI, calc_summaries)
+summary_lists_GFP <- lapply(outputlist_file_paths_GFP, calc_summaries)
+```
+
+# Save data
+```{r}
+###GFP###
+write_data_fun <- function(f, names) {
+  write.table(x = f, file = paste0("../Data/ImagingData_HepG2/all_data/summarydata_GFP/summarydata_GFP_",
+                                   names, ".txt"), sep = "\t", row.names = FALSE )
+}
+
+mapply(write_data_fun, summary_lists_GFP, plateID_str)
+
+###AnVPI###
+# write_data_fun <- function(f, names) {
+#   write.table(x = f, file = paste0("../Data/ImagingData_HepG2/all_data/summarydata_AnVPI/summarydata_AnVPI_", 
+#                                    names, ".txt"), sep = "\t", row.names = FALSE )
+# }
+
+# mapply(write_data_fun, summary_lists_AnVPI, plateID_str)
+
+```
+```
+
+
