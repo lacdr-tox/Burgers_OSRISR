@@ -9,7 +9,8 @@ This script can be used to simulate the different model versions described in th
 
 The code to replicate Supplementary Figure S1a, can be found in DataAnalysis_CompoundData.Rmd
 The code to replicate Figure 3c and Supplementary Figure S8, can be found in Transcriptomics//Fig3c_S8_TranscriptomicsData.Rmd
-The code to replicate Figure 1c and Supplementary Figure 4 can be found in ...
+The code to replicate Figure 1c  can be found in HepG2_HLCs_PHH_joined_data plot_TD22_TD35_TD37.Rmd
+The code to replicate Supplementary Figure 4 can be found in Baseline_Biomarker_Expression.Rmd
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
