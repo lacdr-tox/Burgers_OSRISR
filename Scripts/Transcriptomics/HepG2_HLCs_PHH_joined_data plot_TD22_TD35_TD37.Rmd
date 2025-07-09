@@ -1,0 +1,144 @@
+---
+title: "Comparison of mRNA log2 fold changes for stress response genes SRXN1 and DDIT3 (CHOP) across liver models, 24 hours post-NIT exposure"
+author: "Tamara Danilyuk"
+date: "`r Sys.Date()`"
+output: 
+  prettydoc::html_pretty:
+    fig_width: 8
+    fig_height: 6
+    theme: cayman
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+## Project packages 
+```{r error=F, message=FALSE, warning=FALSE}
+if(!require("pacman", quietly = T)){install.packages("pacman")}; library(pacman)
+p_load(tidyverse, ggpubr, corrr, ggfortify, ggcorrplot, ggdendro, data.table, GGally, viridis,dplyr)
+
+```
+
+## Importing the data and selecting desired gene list
+
+```{r error=F,warning=F,message=F}
+nit_deseq_result <- data.table::fread(file = "E:/TD22 HLCs TempoSeq/DATA/TD22_HLCs_deseq_per_treatment_res.txt.gz", sep = "\t") 
+nit_deseq_result_HepG2 <- data.table::fread(file = "E:/TD22 HLCs TempoSeq/DATA/TranscriptomicsHepG2_NITDICKET.txt", sep = "\t") 
+nit_PHH_tg_gates <- data.table::fread(file = "E:/TD22 HLCs TempoSeq/DATA/TGGATES.csv", sep = ";") 
+hiPSCs_reporter_gene_list=c("SRXN1","DDIT3")
+
+```
+
+## Wrangling the data and combining three test systems
+
+```{r error=F,warning=F,message=F}
+
+# Filter and annotate each dataset with test system name
+
+# Newly generated data
+hlc_data <- nit_deseq_result %>%
+  filter(gene_symbol %in% hiPSCs_reporter_gene_list) %>%
+  separate(condition, into = c("treatment", "time", "concentration"), remove = FALSE) %>%
+  filter(treatment == "Nitrofurantoin", time == "24") %>%
+  mutate(
+    Test_system = "hiPSCs-derived HLCs",time=as.numeric(time),
+    concentration = case_when (
+      concentration==1 ~119,
+      concentration==2~60,
+      concentration==3~6),
+    concentration = as.numeric(concentration)
+  )
+#Publicly available TGGATEs data PHH 
+phh_data <- nit_PHH_tg_gates %>%
+  filter(gene_symbol %in% hiPSCs_reporter_gene_list) %>%
+  filter(time == 24) %>%
+  mutate(
+    concentration = case_when (
+      conc_level==1 ~125,
+      conc_level==2~25,
+      conc_level==3~5,
+    )
+  )%>%
+  mutate(Test_system = "PHH", time=as.numeric(time))
+#Publicly available HepG2 data 
+hepg2_data <- nit_deseq_result_HepG2 %>%
+  filter(
+    gene_symbol %in% hiPSCs_reporter_gene_list,
+    concentration %in% c(120, 60, 6),
+    time == 24,
+    treatment == "Nitrofurantoin"
+  ) %>%
+  mutate(Test_system = "HepG2",time=as.numeric(time))
+
+# Standardize columns for combining
+common_columns <- intersect(names(hlc_data), names(phh_data))
+combined_data <- bind_rows(
+  hlc_data %>% select(all_of(common_columns)),
+  hepg2_data %>% select(all_of(common_columns)),
+  phh_data %>% select(all_of(common_columns))
+)
+
+# Calculate summary statistics by actual concentration and not concentration levels
+combined_data_summary <- combined_data %>%
+  group_by(gene_symbol, concentration, Test_system) %>%
+  summarise(
+    log2FoldChange = mean(log2FoldChange, na.rm = TRUE),
+    avg_pvalue = mean(pvalue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    significance = case_when(
+      avg_pvalue < 0.001 ~ "***",
+      avg_pvalue < 0.01 ~ "**",
+      avg_pvalue < 0.05 ~ "*",
+      TRUE ~ ""
+    )
+  )
+
+
+```
+
+
+## Plot gene counts across liver models and all available concentrations
+
+```{r}
+p6 <- ggplot(combined_data_summary, 
+             aes(x = factor(concentration), y = log2FoldChange, fill = Test_system)) + 
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) + 
+  facet_wrap(~ gene_symbol, scales = "fixed", ncol = 2) +
+  geom_hline(yintercept = 0.6, linetype = "solid", color = "red") +
+  geom_text(aes(label = significance),
+            position = position_dodge(width = 0.9),
+            vjust = -1, size = 4, color = "black") +
+  scale_fill_viridis_d(option = "D") +
+  scale_y_continuous(limits = c(-0.4, 3.6)) +
+  labs(
+    x = "Concentration (µM)",
+    y = expression(Log[2]~"Fold Change")
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    strip.text = element_text(size = 15),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 13),
+    legend.position = "right"
+  )
+  
+print(p6)
+```
+
+#Save the pdf figure
+
+```{r}
+# Specify the file path to save p6
+file_path <- "E:/TD22 HLCs TempoSeq/DATA/Stress_response_genes_baseline_with_doses.pdf"
+
+# Save the plot as a PDF file
+ggsave(file_path, plot = p6, width = 25, height = 16, units = "cm", dpi = 300)
+
+```
+
+

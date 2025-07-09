@@ -1,0 +1,284 @@
+---
+title: "Baseline expression of liver function related genes in HepG2 PHHs and hiPSCs derived HLCs in untreated condition"
+author: "Tamara Danilyuk"
+date: "2025-01-5"
+output: 
+  prettydoc::html_pretty:
+    fig_width: 8
+    fig_height: 6
+    theme: cayman
+    toc: yes
+editor_options: 
+  chunk_output_type: console  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project packages 
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+countdata_path <- "E:/TD22 HLCs TempoSeq/DATA/upload_countdata_cpm_fprobe_fsample_sumprobe.txt"
+metadata_path <- "E:/TD22 HLCs TempoSeq/DATA/upload_metadata.txt"
+outputDIR <- "E:/TD22 HLCs TempoSeq/DATA_TD53-57"
+countdata_filtered <- read.table(countdata_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+metadata_filtered <- read.table(metadata_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+```
+
+##Urea cycle related genes: baseline expression across liver models
+
+```{r}
+
+countdata_filtered_urea <- countdata_filtered %>%
+  filter(gene_symbol %in% c("CPS1", "ASS1", "ASL","ARG1"))  
+
+# Log2 normalization of the CPM counts (adding 1 to avoid log(0))
+countdata_filtered_log2 <- countdata_filtered_urea %>%
+  mutate_at(vars(-gene_symbol), funs(log2(. + 1)))
+
+# Reshape the countdata to long format
+countdata_long <- countdata_filtered_log2 %>%
+  gather(key = "sample_name", value = "log2_count", -gene_symbol)
+
+# Add cell type information to the data (from metadata)
+countdata_long <- countdata_long %>%
+  left_join(metadata_filtered %>%
+              select(sample_name, cell_ID), by = "sample_name")
+
+
+# Calculate summary statistics for error bars (mean ± SE)
+summary_data <- countdata_long %>%
+  group_by(gene_symbol, cell_ID) %>%
+  summarise(
+    mean = mean(log2_count),
+    se = sd(log2_count) / sqrt(n()),
+    .groups = "drop"
+  )
+
+p1=ggplot() +
+  geom_bar(
+    data = summary_data,
+    aes(x = gene_symbol, y = mean, fill = cell_ID),
+    stat = "identity",
+    position = position_dodge(0.7),
+    width = 0.6,
+    color = "black"
+  ) +
+  geom_errorbar(
+    data = summary_data,
+    aes(x = gene_symbol, ymin = mean - se, ymax = mean + se, group = cell_ID),
+    position = position_dodge(0.7),
+    width = 0.2,
+    color = "black"
+  ) +
+  geom_jitter(
+    data = countdata_long,
+    aes(x = gene_symbol, y = log2_count, fill = cell_ID),
+    position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.7),
+    shape = 21,
+    size = 1.5,
+    stroke = 0.2,
+    alpha = 0.7,
+    color = "black"
+  ) +
+  scale_fill_viridis_d(option = "D", name = "Cell Type") +
+  scale_x_discrete(limits = c("CPS1", "ASS1", "ASL", "ARG1")) +
+  coord_cartesian(ylim = c(0, 8)) +
+  labs(
+    x = "Gene",
+    y = expression(Log[2]~"Normalized Counts"),
+    title = "Baseline expression of urea cycle-related genes"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14)
+  )
+
+
+print(p1)
+```
+
+# Save the plot as a PDF
+
+```{r}
+file_path2 <-"E:/TD22 HLCs TempoSeq/DATA_TD53-57/Urea_cycle_genes_baseline.pdf"
+ggsave(filename = file_path2, plot = p1, width = 10, height = 6, units = 'in', device = 'pdf')
+```
+
+##Albumin production related genes: baseline expression across liver models
+
+
+```{r}
+
+countdata_filtered_albumin <- countdata_filtered %>%
+  filter(gene_symbol %in% c("ALB", "HNF4A", "HNF1A","CEBPA"))  
+
+# Log2 normalization of the CPM counts (adding 1 to avoid log(0))
+countdata_filtered_log2 <- countdata_filtered %>%
+  mutate_at(vars(-gene_symbol), funs(log2(. + 1)))
+
+# Reshape the countdata to long format
+countdata_long <- countdata_filtered_log2 %>%
+  gather(key = "sample_name", value = "log2_count", -gene_symbol)
+
+# Add cell type information to the data (from metadata)
+countdata_long <- countdata_long %>%
+  left_join(metadata_filtered %>%
+              select(sample_name, cell_ID), by = "sample_name")
+
+
+# Calculate summary statistics for error bars (mean ± SE)
+summary_data <- countdata_long %>%
+  group_by(gene_symbol, cell_ID) %>%
+  summarise(
+    mean = mean(log2_count),
+    se = sd(log2_count) / sqrt(n()),
+    .groups = "drop"
+  )
+
+p1=ggplot() +
+  geom_bar(
+    data = summary_data,
+    aes(x = gene_symbol, y = mean, fill = cell_ID),
+    stat = "identity",
+    position = position_dodge(0.7),
+    width = 0.6,
+    color = "black"
+  ) +
+  geom_errorbar(
+    data = summary_data,
+    aes(x = gene_symbol, ymin = mean - se, ymax = mean + se, group = cell_ID),
+    position = position_dodge(0.7),
+    width = 0.2,
+    color = "black"
+  ) +
+  geom_jitter(
+    data = countdata_long,
+    aes(x = gene_symbol, y = log2_count, fill = cell_ID),
+    position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.7),
+    shape = 21,
+    size = 1.5,
+    stroke = 0.2,
+    alpha = 0.7,
+    color = "black"
+  ) +
+  scale_fill_viridis_d(option = "D", name = "Cell Type") +
+  scale_x_discrete(limits = c("ALB", "HNF4A", "HNF1A","CEBPA")) +
+  coord_cartesian(ylim = c(0, 13)) +
+  labs(
+    x = "Gene",
+    y = expression(Log[2]~"Normalized Counts"),
+    title = "Baseline expression of albumin production-related genes"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14)
+  )
+
+
+print(p1)
+```
+
+# Save the plot as a PDF
+
+```{r}
+file_path2 <-"E:/TD22 HLCs TempoSeq/DATA_TD53-57/Albumin_production_genes_baseline.pdf"
+
+# Save the plot as a PDF
+ggsave(filename = file_path2, plot = p1, width = 10, height = 6, units = 'in', device = 'pdf')
+```
+
+##Glutathione production related genes: baseline expression across liver models
+
+```{r}
+countdata_filtered_gsh <- countdata_filtered  %>%
+  filter(gene_symbol %in% c("GCLM", "GCLC"))  
+
+# Log2 normalization of the CPM counts (adding 1 to avoid log(0))
+countdata_filtered_log2 <- countdata_filtered %>%
+  mutate_at(vars(-gene_symbol), funs(log2(. + 1)))
+
+# Reshape the countdata to long format
+countdata_long <- countdata_filtered_log2 %>%
+  gather(key = "sample_name", value = "log2_count", -gene_symbol)
+
+# Add cell type information to the data (from metadata)
+countdata_long <- countdata_long %>%
+  left_join(metadata_filtered %>%
+              select(sample_name, cell_ID), by = "sample_name")
+
+
+# Calculate summary statistics for error bars (mean ± SE)
+summary_data <- countdata_long %>%
+  group_by(gene_symbol, cell_ID) %>%
+  summarise(
+    mean = mean(log2_count),
+    se = sd(log2_count) / sqrt(n()),
+    .groups = "drop"
+  )
+
+p1=ggplot() +
+  geom_bar(
+    data = summary_data,
+    aes(x = gene_symbol, y = mean, fill = cell_ID),
+    stat = "identity",
+    position = position_dodge(0.7),
+    width = 0.6,
+    color = "black"
+  ) +
+  geom_errorbar(
+    data = summary_data,
+    aes(x = gene_symbol, ymin = mean - se, ymax = mean + se, group = cell_ID),
+    position = position_dodge(0.7),
+    width = 0.2,
+    color = "black"
+  ) +
+  geom_jitter(
+    data = countdata_long,
+    aes(x = gene_symbol, y = log2_count, fill = cell_ID),
+    position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.7),
+    shape = 21,
+    size = 1.5,
+    stroke = 0.2,
+    alpha = 0.7,
+    color = "black"
+  ) +
+  scale_fill_viridis_d(option = "D", name = "Cell Type") +
+  scale_x_discrete(limits = c("GCLC", "GCLM")) +
+  coord_cartesian(ylim = c(0, 13)) +
+  labs(
+    x = "Gene",
+    y = expression(Log[2]~"Normalized Counts"),
+    title = "Baseline expression of Glutathione-related genes"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14)
+  )
+
+
+print(p1)
+```
+
+# Save the plot as a PDF
+
+```{r}
+
+file_path2 <-"E:/TD22 HLCs TempoSeq/DATA_TD53-57/GSH_production_genes_baseline.pdf"
+
+# Save the plot as a PDF
+ggsave(filename = file_path2, plot = p1, width = 10, height = 6, units = 'in', device = 'pdf')
+```
+
+
