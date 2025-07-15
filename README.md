@@ -1,6 +1,6 @@
 # Repository corresponding to _Mathematical modelling reveals compound-specific stress pathway activity_
 
-Repository corresponding to the article Mathematical modelling reveals compound-specific stress pathway activity by Burgers et al.
+Repository corresponding to the article: Mathematical modelling reveals compound-specific stress pathway activity by Burgers et al. _Toxicology_ (2025)
 
 
 \- _Data_ contains the small data files required to reproduce most of the images, the transcriptomics data is uploaded in a separate repository. 
